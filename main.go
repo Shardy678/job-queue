@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -101,7 +100,7 @@ func processJob(rdb *redis.Client, ctx context.Context, job Job) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	err = doJob()
+	err = doJob(job)
 	if err != nil {
 		job.Attempts += 1
 		if job.Attempts < job.MaxRetries {
@@ -132,12 +131,51 @@ func processJob(rdb *redis.Client, ctx context.Context, job Job) {
 	}
 }
 
-func doJob() error {
-	num := rand.Intn(2)
-	if num == 0 {
-		return errors.New("job failed")
+func doJob(job Job) error {
+	switch job.JobType {
+	case "email":
+		to := job.Payload["to"]
+		subject := job.Payload["subject"]
+		body := job.Payload["body"]
+		if to == "" || subject == "" || body == "" {
+			return errors.New("missing email fields")
+		}
+		fmt.Printf("Simulated sending email to %s: %s - %s\n", to, subject, body)
+		time.Sleep(1 * time.Second)
+		return nil
+
+	case "log":
+		message := job.Payload["message"]
+		if message == "" {
+			return errors.New("missing log message")
+		}
+		fmt.Printf("Log job: %s\n", message)
+		return nil
+
+	case "math":
+		aStr := job.Payload["a"]
+		bStr := job.Payload["b"]
+		if aStr == "" || bStr == "" {
+			return errors.New("missing math operands")
+		}
+		var a, b int
+		_, errA := fmt.Sscan(aStr, &a)
+		_, errB := fmt.Sscan(bStr, &b)
+		if errA != nil || errB != nil {
+			return errors.New("invalid math operands")
+		}
+		result := a + b
+		fmt.Printf("Math job: %d + %d = %d\n", a, b, result)
+		return nil
+
+	case "simulate":
+		fmt.Println("Simulating a long task...")
+		time.Sleep(2 * time.Second)
+		return nil
+
+	default:
+		return errors.New("unsupported job type: " + job.JobType)
 	}
-	return nil
 }
 
 func getJobHandler(rdb *redis.Client) gin.HandlerFunc {
