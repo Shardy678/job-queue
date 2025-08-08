@@ -50,7 +50,6 @@ func handleJob(rdb *redis.Client) gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		// Validation
 		if req.Type == "" {
 			c.JSON(400, gin.H{"error": "job_type is required"})
 			return
@@ -170,6 +169,32 @@ func getJobHandler(rdb *redis.Client) gin.HandlerFunc {
 	}
 }
 
+func getAllJobsHandler(rdb *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var jobs []Job
+		// SCAN for job keys
+		iter := rdb.Scan(ctx, 0, storageKey+"*", 0).Iterator()
+		for iter.Next(ctx) {
+			jobJSON, err := rdb.Get(ctx, iter.Val()).Result()
+			if err != nil {
+				fmt.Println("Redis get error:", err)
+				continue // skip this job if error
+			}
+			var job Job
+			if err := json.Unmarshal([]byte(jobJSON), &job); err != nil {
+				fmt.Println("Unmarshal error:", err)
+				continue // skip this job if error
+			}
+			jobs = append(jobs, job)
+		}
+		if err := iter.Err(); err != nil {
+			c.JSON(500, gin.H{"error": "error scanning jobs"})
+			return
+		}
+		c.JSON(200, jobs)
+	}
+}
+
 func main() {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
@@ -190,6 +215,7 @@ func main() {
 	r := gin.Default()
 	r.POST("/job", handleJob(rdb))
 	r.GET("/job/:id", getJobHandler(rdb))
+	r.GET("/jobs", getAllJobsHandler(rdb))
 	r.Run(":8080")
 	log.Println("Running on localhost:8080")
 }
