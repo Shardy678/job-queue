@@ -50,6 +50,15 @@ func handleJob(rdb *redis.Client) gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
+		// Validation
+		if req.Type == "" {
+			c.JSON(400, gin.H{"error": "job_type is required"})
+			return
+		}
+		if len(req.Payload) == 0 {
+			c.JSON(400, gin.H{"error": "payload is required and cannot be empty"})
+			return
+		}
 		job := newJob(req.Type, req.Payload)
 		b, _ := json.Marshal(job)
 		rdb.LPush(ctx, queueKey, b)
@@ -135,10 +144,14 @@ func doJob() error {
 func getJobHandler(rdb *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
+		_, err := uuid.Parse(id)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "invalid job id"})
+		}
 		key := storageKey + id
 		jobJSON, err := rdb.Get(ctx, key).Result()
 		if err == redis.Nil {
-			c.JSON(404, gin.H{"error": "not found"})
+			c.JSON(404, gin.H{"error": "job not found"})
 			return
 		}
 		if err != nil {
