@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
+	"math/rand"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -54,6 +58,105 @@ func handleJob(rdb *redis.Client) gin.HandlerFunc {
 	}
 }
 
+func startWorker(rdb *redis.Client, ctx context.Context) {
+	for {
+		res, err := rdb.BLPop(ctx, 5*time.Second, queueKey).Result()
+		if err == redis.Nil {
+			continue
+		}
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		if len(res) < 2 {
+			continue
+		}
+		jobJSON := res[1]
+		var job Job
+		err = json.Unmarshal([]byte(jobJSON), &job)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		processJob(rdb, ctx, job)
+	}
+}
+
+func processJob(rdb *redis.Client, ctx context.Context, job Job) {
+	job.Status = "processing"
+	jobJSON, err := json.Marshal(job)
+	if err != nil {
+		fmt.Println(err)
+	}
+	result := rdb.Set(ctx, storageKey+job.ID.String(), jobJSON, 0)
+	err = result.Err()
+	if err != nil {
+		fmt.Println(err)
+	}
+	err = doJob()
+	if err != nil {
+		job.Attempts += 1
+		if job.Attempts < job.MaxRetries {
+			job.Status = "pending"
+			jobJSON, err = json.Marshal(job)
+			if err != nil {
+				fmt.Println(err)
+			}
+			result := rdb.LPush(ctx, queueKey, jobJSON)
+			err = result.Err()
+			if err != nil {
+				fmt.Println(err)
+			}
+		} else {
+			job.Status = "failed"
+		}
+	} else {
+		job.Status = "completed"
+	}
+	jobJSON, err = json.Marshal(job)
+	if err != nil {
+		fmt.Println(err)
+	}
+	result = rdb.Set(ctx, storageKey+job.ID.String(), jobJSON, 0)
+	err = result.Err()
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+func doJob() error {
+	num := rand.Intn(2)
+	if num == 0 {
+		return errors.New("job failed")
+	}
+	return nil
+}
+
+func getJobHandler(rdb *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		key := storageKey + id
+		jobJSON, err := rdb.Get(ctx, key).Result()
+		if err == redis.Nil {
+			c.JSON(404, gin.H{"error": "not found"})
+			return
+		}
+		if err != nil {
+			fmt.Println(err)
+			c.JSON(500, gin.H{"error": "internal server error"})
+			return
+		}
+		var job Job
+		err = json.Unmarshal([]byte(jobJSON), &job)
+		if err != nil {
+			fmt.Println(err)
+			c.JSON(500, gin.H{"error": "internal server error"})
+			return
+		}
+		c.JSON(200, job)
+	}
+}
+
 func main() {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
@@ -67,10 +170,13 @@ func main() {
 	} else {
 		log.Println("✅ Successfully connected to Redis")
 	}
-
+	numWorkers := 3
+	for i := 0; i < numWorkers; i++ {
+		go startWorker(rdb, ctx)
+	}
 	r := gin.Default()
 	r.POST("/job", handleJob(rdb))
-
+	r.GET("/job/:id", getJobHandler(rdb))
 	r.Run(":8080")
 	log.Println("Running on localhost:8080")
 }
