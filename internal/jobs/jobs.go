@@ -41,14 +41,6 @@ func DoJob(job Job) error {
 		time.Sleep(1 * time.Second)
 		return nil
 
-	case "log":
-		message := job.Payload["message"]
-		if message == "" {
-			return errors.New("missing log message")
-		}
-		fmt.Printf("Log job: %s\n", message)
-		return nil
-
 	case "math":
 		aStr := job.Payload["a"]
 		bStr := job.Payload["b"]
@@ -65,7 +57,7 @@ func DoJob(job Job) error {
 		fmt.Printf("Math job: %d + %d = %d\n", a, b, result)
 		return nil
 
-	case "simulate":
+	case "long":
 		fmt.Println("Simulating a long task...")
 		time.Sleep(2 * time.Second)
 		return nil
